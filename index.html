@@ -1,0 +1,269 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>动态攀岩墙布局工具 (90英寸高)</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;700&display=swap" rel="stylesheet">
+    <style>
+        body {
+            font-family: 'Noto Sans SC', sans-serif;
+        }
+        .wall-background {
+            background-color: #d2b48c; /* Wood color */
+            background-image:
+                linear-gradient(90deg, rgba(255,255,255,.07) 50%, transparent 50%),
+                linear-gradient(90deg, rgba(255,255,255,.13) 50%, transparent 50%);
+            background-size: 13px, 29px;
+            padding: 12px; /* Simulate 3-inch border */
+        }
+        .tnut {
+            background-color: rgba(0, 0, 0, 0.3);
+            border-radius: 50%;
+            width: 8px;
+            height: 8px;
+            box-shadow: inset 0 1px 2px rgba(0,0,0,0.5);
+        }
+        .hold {
+            width: 90%;
+            height: 90%;
+            border-radius: 50%;
+            box-shadow: 0 5px 8px rgba(0, 0, 0, 0.25), inset 0 2px 4px rgba(255, 255, 255, 0.2);
+            transition: all 0.2s ease-in-out;
+            cursor: pointer;
+        }
+        .hold:hover {
+            transform: scale(1.1);
+        }
+        textarea {
+            font-family: monospace;
+        }
+        /* Custom grid rows for 15 rows */
+        .grid-rows-15 {
+            grid-template-rows: repeat(15, minmax(0, 1fr));
+        }
+    </style>
+</head>
+<body class="bg-gray-100 p-4 md:p-8">
+
+    <div class="max-w-7xl mx-auto grid grid-cols-1 lg:grid-cols-3 gap-8">
+        
+        <!-- Left control panel -->
+        <div class="lg:col-span-1 bg-white rounded-xl shadow-lg p-6 h-fit">
+            <h1 class="text-2xl font-bold text-gray-800">路线控制器</h1>
+            <p class="text-gray-500 mt-1 mb-6">选择路线或更新布局</p>
+
+            <div id="route-selector" class="space-y-3 mb-6">
+                <!-- Route toggle buttons will be generated here -->
+            </div>
+            
+            <div id="route-details" class="space-y-4">
+                <!-- Coordinates of selected routes will be shown here -->
+            </div>
+
+            <hr class="my-6">
+
+            <div>
+                <h2 class="text-xl font-bold text-gray-800">更新布局</h2>
+                <p class="text-gray-500 mt-1 mb-3 text-sm">在这里粘贴新的路线数据 (JSON格式) 并点击更新。</p>
+                <textarea id="json-input" class="w-full h-48 p-2 border border-gray-300 rounded-md bg-gray-50 focus:ring-2 focus:ring-blue-500 focus:border-blue-500"></textarea>
+                <button id="update-btn" class="mt-3 w-full bg-blue-600 text-white font-bold py-2 px-4 rounded-lg hover:bg-blue-700 transition-colors">
+                    更新攀岩墙
+                </button>
+                <p id="error-message" class="text-red-500 text-sm mt-2"></p>
+            </div>
+        </div>
+
+        <!-- Right climbing wall -->
+        <div class="lg:col-span-2 bg-white rounded-xl shadow-lg p-4">
+            <div id="wall-container" class="relative mx-auto" style="aspect-ratio: 48 / 90; max-width: 500px;">
+                <div id="col-labels" class="absolute -top-6 left-0 right-0 grid grid-cols-8 text-center font-bold text-gray-700 text-sm" style="padding-left: 12px; padding-right: 12px;"></div>
+                <div id="row-labels" class="absolute -left-6 top-0 bottom-0 flex flex-col-reverse text-center font-bold text-gray-700 text-sm" style="padding-top: 12px; padding-bottom: 12px;"></div>
+                
+                <div class="wall-background w-full h-full rounded-lg border-2 border-gray-800">
+                    <div id="climbing-wall" class="w-full h-full grid grid-cols-8 grid-rows-15">
+                        <!-- Grid cells with holds or t-nuts will be generated here -->
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', () => {
+            const wall = document.getElementById('climbing-wall');
+            const routeSelector = document.getElementById('route-selector');
+            const routeDetails = document.getElementById('route-details');
+            const jsonInput = document.getElementById('json-input');
+            const updateBtn = document.getElementById('update-btn');
+            const errorMessage = document.getElementById('error-message');
+
+            const WALL_WIDTH = 8;
+            const WALL_HEIGHT = 15; // *** UPDATED from 17 to 15 ***
+
+            let routeData = [];
+            let activeRoutes = new Set();
+
+            // *** UPDATED default data to fit within 15 rows ***
+            const initialJsonData = `[
+              {
+                "routeName": "小兔子坡 (Bunny Slope)",
+                "targetAge": "1.5岁+",
+                "color": "#F59E0B",
+                "holds": ["B2", "B5", "B8", "B11", "C3", "C6", "C9", "D2", "D5", "D8", "D12", "E4", "E7", "E10"]
+              },
+              {
+                "routeName": "小狐狸小径 (Fox Trail)",
+                "targetAge": "4岁+",
+                "color": "#3B82F6",
+                "holds": ["A3", "A7", "A12", "C5", "C10", "C14", "E2", "E8", "E13", "F6", "F11", "G4", "G9", "G15", "H14"]
+              }
+            ]`;
+
+            function parseCoord(coord) {
+                if (typeof coord !== 'string' || coord.length < 2) return null;
+                const col = coord.toUpperCase().charCodeAt(0) - 'A'.charCodeAt(0);
+                const row = parseInt(coord.substring(1)) - 1;
+                if (isNaN(row) || col < 0 || col >= WALL_WIDTH || row < 0 || row >= WALL_HEIGHT) return null;
+                return { col, row };
+            }
+            
+            function renderWall() {
+                wall.innerHTML = '';
+                const gridMap = new Map();
+                routeData.forEach((route, index) => {
+                    if (activeRoutes.has(index)) {
+                        route.holds.forEach(coordStr => {
+                            const pos = parseCoord(coordStr);
+                            if (pos) {
+                                gridMap.set(`${pos.col},${pos.row}`, { color: route.color });
+                            }
+                        });
+                    }
+                });
+
+                for (let i = WALL_HEIGHT - 1; i >= 0; i--) {
+                    for (let j = 0; j < WALL_WIDTH; j++) {
+                        const cell = document.createElement('div');
+                        cell.className = 'w-full h-full flex items-center justify-center';
+                        const key = `${j},${i}`;
+                        const holdData = gridMap.get(key);
+                        if (holdData) {
+                            const holdEl = document.createElement('div');
+                            holdEl.className = 'hold';
+                            holdEl.style.backgroundColor = holdData.color;
+                            cell.appendChild(holdEl);
+                        } else {
+                            const tnutEl = document.createElement('div');
+                            tnutEl.className = 'tnut';
+                            cell.appendChild(tnutEl);
+                        }
+                        wall.appendChild(cell);
+                    }
+                }
+            }
+
+            function renderControls() {
+                routeSelector.innerHTML = '';
+                routeData.forEach((route, index) => {
+                    const button = document.createElement('button');
+                    const isActive = activeRoutes.has(index);
+                    button.className = `w-full text-left p-3 rounded-lg border-2 transition-all ${isActive ? 'font-bold text-white' : 'bg-gray-100 hover:bg-gray-200'}`;
+                    button.style.backgroundColor = isActive ? route.color : '';
+                    button.style.borderColor = route.color;
+                    
+                    button.innerHTML = `
+                        <div class="flex items-center">
+                           <div class="w-4 h-4 rounded-full mr-3" style="background-color: ${route.color}; border: 1px solid rgba(0,0,0,0.2)"></div>
+                           <div>
+                                <div>${route.routeName}</div>
+                                <div class="text-xs opacity-80">${route.targetAge}</div>
+                           </div>
+                        </div>
+                    `;
+                    button.onclick = () => {
+                        if (activeRoutes.has(index)) {
+                            activeRoutes.delete(index);
+                        } else {
+                            activeRoutes.add(index);
+                        }
+                        updateUI();
+                    };
+                    routeSelector.appendChild(button);
+                });
+            }
+            
+            function renderDetails() {
+                routeDetails.innerHTML = '';
+                 routeData.forEach((route, index) => {
+                    if (activeRoutes.has(index)) {
+                        const detailDiv = document.createElement('div');
+                        detailDiv.className = 'p-3 rounded-lg border';
+                        detailDiv.style.borderColor = route.color;
+                        detailDiv.innerHTML = `
+                            <h3 class="font-bold text-lg" style="color: ${route.color}">${route.routeName} 坐标</h3>
+                            <p class="text-gray-600 text-sm break-words mt-1">${route.holds.join(', ')}</p>
+                        `;
+                        routeDetails.appendChild(detailDiv);
+                    }
+                });
+            }
+
+            function updateUI() {
+                renderControls();
+                renderWall();
+                renderDetails();
+            }
+
+            function loadRoutes(jsonString) {
+                try {
+                    const data = JSON.parse(jsonString);
+                    if (!Array.isArray(data)) throw new Error("JSON数据必须是一个数组。");
+                    
+                    data.forEach(route => {
+                        if (!route.routeName || !route.color || !Array.isArray(route.holds)) {
+                            throw new Error("每个路线对象必须包含 'routeName', 'color', 和 'holds' 数组。");
+                        }
+                    });
+
+                    routeData = data;
+                    activeRoutes.clear();
+                    routeData.forEach((_, index) => activeRoutes.add(index));
+                    errorMessage.textContent = '';
+                    jsonInput.value = JSON.stringify(routeData, null, 2);
+                    updateUI();
+                } catch (e) {
+                    errorMessage.textContent = `错误: ${e.message}`;
+                    console.error(e);
+                }
+            }
+            
+            // Initialize axis labels
+            const colLabels = document.getElementById('col-labels');
+            const rowLabels = document.getElementById('row-labels');
+            colLabels.innerHTML = '';
+            rowLabels.innerHTML = '';
+
+            for (let i = 0; i < WALL_WIDTH; i++) {
+                colLabels.innerHTML += `<div>${String.fromCharCode('A'.charCodeAt(0) + i)}</div>`;
+            }
+            for (let i = 1; i <= WALL_HEIGHT; i++) {
+                const label = document.createElement('div');
+                label.className = 'flex-1 flex items-center justify-center';
+                label.textContent = i;
+                rowLabels.appendChild(label);
+            }
+
+            // Event Listeners
+            updateBtn.addEventListener('click', () => loadRoutes(jsonInput.value));
+
+            // Initial Load
+            loadRoutes(initialJsonData);
+        });
+    </script>
+</body>
+</html>
+
